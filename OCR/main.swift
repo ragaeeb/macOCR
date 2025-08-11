@@ -2,6 +2,8 @@ import Vision
 import Cocoa
 import PDFKit
 
+let VERSION = "1.2.1"
+
 /**
  * Rounds a Double value to exactly 3 decimal places using NSDecimalNumber for precision
  * - Parameter v: The double value to round
@@ -58,6 +60,8 @@ struct CommandLineOptions {
     var pageRange: ClosedRange<Int>? = nil
     /// Flag to show help message
     var showHelp: Bool = false
+    /// Flag to show version number
+    var showVersion: Bool = false
     /// Flag to show supported languages
     var showSupportedLanguages: Bool = false
 }
@@ -78,7 +82,11 @@ func parseCommandLineArguments(_ args: [String]) -> CommandLineOptions? {
         case "-h", "--help":
             options.showHelp = true
             return options
-            
+
+        case "-v", "--version":
+            options.showVersion = true
+            return options
+
         case "--supported-languages":
             options.showSupportedLanguages = true
             return options
@@ -132,6 +140,10 @@ func parseCommandLineArguments(_ args: [String]) -> CommandLineOptions? {
     }
     
     return options
+}
+
+func printVersion() {
+    print("macOCR version \(VERSION)")
 }
 
 /**
@@ -471,6 +483,11 @@ func main(args: [String]) -> Int32 {
         return 0
     }
     
+    if options.showVersion {
+        printVersion()
+        return 0
+    }
+    
     if options.showSupportedLanguages {
         printSupportedLanguages()
         return 0
@@ -560,14 +577,15 @@ func main(args: [String]) -> Int32 {
             for i in (startPage-1)...(endPage-1) {
                 print("Processing page \(i+1) of \(pageCount)...")
                 guard let page = pdf.page(at: i) else { continue }
-                let pageBounds = page.bounds(for: .mediaBox)
+                let pageBounds = page.bounds(for: .cropBox)
+                let effectiveBounds = pageBounds.isEmpty ? page.bounds(for: .mediaBox) : pageBounds
 
                 let scale: CGFloat = 2.0
                 let renderSize = CGSize(
-                    width: max(1, pageBounds.width * scale),
-                    height: max(1, pageBounds.height * scale)
+                    width: max(1, effectiveBounds.width * scale),
+                    height: max(1, effectiveBounds.height * scale)
                 )
-                let thumb = page.thumbnail(of: renderSize, for: .mediaBox)
+                let thumb = page.thumbnail(of: renderSize, for: .cropBox)
                 guard let cgImg = thumb.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                     fputs("Failed to render page \(i+1) of PDF.\n", stderr)
                     continue
@@ -575,8 +593,8 @@ func main(args: [String]) -> Int32 {
 
                 // Compute DPI from first page
                 if i == (startPage-1) {
-                    let rawDpiX = Double(cgImg.width)  / (Double(pageBounds.width)  / 72.0)
-                    let rawDpiY = Double(cgImg.height) / (Double(pageBounds.height) / 72.0)
+                    let rawDpiX = Double(cgImg.width)  / (Double(effectiveBounds.width)  / 72.0)
+                    let rawDpiY = Double(cgImg.height) / (Double(effectiveBounds.height) / 72.0)
                     dpiX = round3(rawDpiX)
                     dpiY = round3(rawDpiY)
                 }
@@ -584,6 +602,7 @@ func main(args: [String]) -> Int32 {
                 if let ocrResult = performOCR(cgImage: cgImg, languages: languages) {
                     var pageDict = ocrResult
                     pageDict["page"] = i + 1
+                    
                     pagesArray.append(pageDict)
                 }
             }
