@@ -13,12 +13,13 @@ A high-performance Swift command-line tool that leverages Apple's [Vision framew
 - **Batch Processing**: Process entire directories into consolidated output files
 - **PDF Support**: Extract text from PDFs with optional page range selection
 - **Precise Coordinates**: Bounding boxes with 3-decimal precision and flipped Y-axis for standard coordinate systems
+- **Paragraph Preservation**: Flattens multi-line paragraphs using Vision's `RecognizeDocumentsRequest` so text output mirrors Preview's paragraph selection
 - **Natural Sorting**: Intelligent file ordering (e.g., "2.jpg" before "10.jpg")
 
 ## 🔧 Requirements
 
 - **macOS 15.0+** (Sequoia or later)
-- **Swift 5.7+**
+- **Swift 5.9+**
 - **Xcode 16+** (for building)
 - Apple Silicon or Intel Mac with Vision framework support
 
@@ -39,7 +40,7 @@ A high-performance Swift command-line tool that leverages Apple's [Vision framew
 git clone https://github.com/ragaeeb/macOCR.git
 cd macOCR
 swift build -c release
-# Binary will be at .build/release/macOCR
+# Binary will be at .build/release/macocr
 ```
 
 ## 🚀 Usage
@@ -122,6 +123,22 @@ macOCR --language en,zh scanned_docs/ --output multilang_output.json
 macOCR --supported-languages
 # → Displays JSON array of language codes
 ```
+
+## 🧪 Testing & Development
+
+The project now ships with a Swift Package Manager setup so you can build and test
+the shared core logic on any platform (the full CLI still requires macOS 15+ to run).
+
+```bash
+# Run the cross-platform unit test suite
+swift test
+
+# Build the executable for debugging
+swift build
+```
+
+The executable product is named `macocr` when built via SPM. On macOS you can still
+open `macOCR.xcodeproj` to build the full Vision-powered tool.
 
 ## 📊 Output Structure
 

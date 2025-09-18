@@ -1,8 +1,9 @@
 import Vision
 import Cocoa
 import PDFKit
+import Dispatch
 
-let VERSION = "1.2.1"
+let VERSION = "1.3.0"
 
 /**
  * Rounds a Double value to exactly 3 decimal places using NSDecimalNumber for precision
@@ -44,6 +45,25 @@ func round3(_ v: Double) -> NSDecimalNumber {
  */
 func round3(_ v: CGFloat) -> NSDecimalNumber {
     return round3(Double(v))
+}
+
+@available(macOS 15.0, *)
+func runAsyncAndBlock<T>(_ operation: @escaping () async throws -> T) throws -> T {
+    let semaphore = DispatchSemaphore(value: 0)
+    var result: Result<T, Error>?
+
+    Task {
+        result = Result { try await operation() }
+        semaphore.signal()
+    }
+
+    semaphore.wait()
+
+    if let outcome = result {
+        return try outcome.get()
+    }
+
+    throw NSError(domain: "macOCR", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown async execution failure"])
 }
 
 /**
@@ -309,6 +329,62 @@ func printSupportedLanguages() {
  * - Returns: Dictionary containing OCR results with width, height, and observations
  */
 @available(macOS 15.0, *)
+func recognizeDocumentParagraphs(cgImage: CGImage, languages: [String]) -> [[String: Any]]? {
+    guard let bitmap = NSBitmapImageRep(cgImage: cgImage),
+          let imageData = bitmap.representation(using: .png, properties: [:]) else {
+        fputs("Document paragraph extraction failed: unable to generate image data.\n", stderr)
+        return nil
+    }
+
+    var request = RecognizeDocumentsRequest()
+    request.textRecognitionOptions.recognitionLanguages = languages
+    request.textRecognitionOptions.useLanguageCorrection = false
+    request.textRecognitionOptions.automaticallyDetectLanguage = languages.isEmpty
+
+    let imageWidth = CGFloat(cgImage.width)
+    let imageHeight = CGFloat(cgImage.height)
+
+    let observations: [DocumentObservation]
+    do {
+        observations = try runAsyncAndBlock {
+            try await request.perform(on: imageData)
+        }
+    } catch {
+        fputs("Document paragraph extraction failed: \(error.localizedDescription)\n", stderr)
+        return nil
+    }
+
+    var paragraphs: [[String: Any]] = []
+
+    for observation in observations {
+        for paragraph in observation.document.paragraphs {
+            let normalizedRect = paragraph.boundingRegion.boundingBox
+            let rect = VNImageRectForNormalizedRect(normalizedRect, Int(imageWidth), Int(imageHeight))
+            let flippedY = imageHeight - rect.origin.y - rect.size.height
+
+            var paragraphEntry: [String: Any] = [
+                "text": paragraph.transcript,
+                "bbox": [
+                    "x": round3(rect.origin.x),
+                    "y": round3(flippedY),
+                    "width": round3(rect.size.width),
+                    "height": round3(rect.size.height)
+                ]
+            ]
+
+            let lineTexts = paragraph.lines.map { $0.transcript }.filter { !$0.isEmpty }
+            if !lineTexts.isEmpty {
+                paragraphEntry["lines"] = lineTexts
+            }
+
+            paragraphs.append(paragraphEntry)
+        }
+    }
+
+    return paragraphs
+}
+
+@available(macOS 15.0, *)
 func performOCR(cgImage: CGImage, languages: [String]) -> [String: Any]? {
     let imageWidth = CGFloat(cgImage.width)
     let imageHeight = CGFloat(cgImage.height)
@@ -355,11 +431,18 @@ func performOCR(cgImage: CGImage, languages: [String]) -> [String: Any]? {
         ])
     }
 
-    return [
+    var result: [String: Any] = [
         "width": Int(imageWidth),
         "height": Int(imageHeight),
         "observations": observations
     ]
+
+    if let paragraphs = recognizeDocumentParagraphs(cgImage: cgImage, languages: languages),
+       !paragraphs.isEmpty {
+        result["paragraphs"] = paragraphs
+    }
+
+    return result
 }
 
 /**
@@ -422,14 +505,22 @@ func writeTextOutput(_ object: [String: Any], to finalOutputPath: String) throws
         let sortedKeys = batchData.keys.sorted { a, b in
             a.localizedStandardCompare(b) == .orderedAscending
         }
-        
+
         for filename in sortedKeys {
-            if let fileData = batchData[filename],
-               let observations = fileData["observations"] as? [[String: Any]] {
-                if !textLines.isEmpty {
-                    textLines.append("") // Add blank line between files
+            guard let fileData = batchData[filename] else { continue }
+
+            if !textLines.isEmpty {
+                textLines.append("") // Add blank line between files
+            }
+            textLines.append("=== \(filename) ===")
+
+            if let paragraphs = fileData["paragraphs"] as? [[String: Any]], !paragraphs.isEmpty {
+                for paragraph in paragraphs {
+                    if let text = paragraph["text"] as? String {
+                        textLines.append(text)
+                    }
                 }
-                textLines.append("=== \(filename) ===")
+            } else if let observations = fileData["observations"] as? [[String: Any]] {
                 for observation in observations {
                     if let text = observation["text"] as? String {
                         textLines.append(text)
@@ -445,7 +536,13 @@ func writeTextOutput(_ object: [String: Any], to finalOutputPath: String) throws
                 textLines.append("") // Add blank line between pages
             }
 
-            if let observations = page["observations"] as? [[String: Any]] {
+            if let paragraphs = page["paragraphs"] as? [[String: Any]], !paragraphs.isEmpty {
+                for paragraph in paragraphs {
+                    if let text = paragraph["text"] as? String {
+                        textLines.append(text)
+                    }
+                }
+            } else if let observations = page["observations"] as? [[String: Any]] {
                 for observation in observations {
                     if let text = observation["text"] as? String {
                         textLines.append(text)
@@ -455,6 +552,13 @@ func writeTextOutput(_ object: [String: Any], to finalOutputPath: String) throws
         }
     }
     // For single image processing
+    else if let paragraphs = object["paragraphs"] as? [[String: Any]], !paragraphs.isEmpty {
+        for paragraph in paragraphs {
+            if let text = paragraph["text"] as? String {
+                textLines.append(text)
+            }
+        }
+    }
     else if let observations = object["observations"] as? [[String: Any]] {
         for observation in observations {
             if let text = observation["text"] as? String {
