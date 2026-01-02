@@ -372,11 +372,22 @@ ditto -c -k --keepParent ./macOCR macOCR.zip
 
 ### 🧾 4. Submit for Notarization
 
+**Option A (Recommended): Store Credentials**
+
+```bash
+xcrun notarytool store-credentials --apple-id "your@email.com" --team-id "TEAMID" --password "app-specific-pw"
+# Prompts for profile name, e.g. "macOCR"
+
+xcrun notarytool submit macOCR.zip --keychain-profile "macOCR" --wait
+```
+
+**Option B: Direct Credentials**
+
 ```bash
 xcrun notarytool submit macOCR.zip \
   --apple-id "your@email.com" \
   --team-id "TEAMID" \
-  --password "app-specific-password" \
+  --password "app-specific-pw" \
   --wait
 ```
 

@@ -101,8 +101,12 @@ let flippedY = imageHeight - absBox.origin.y - absBox.size.height
 ```swift
 // Use nonisolated and @Sendable for async helpers
 nonisolated func runAsyncAndBlock<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) throws -> T {
-    nonisolated(unsafe) var result: Result<T, Error>?
-    // ...
+    // Use a local class container to safely bridge async-to-sync without data races
+    class ResultContainer: @unchecked Sendable {
+        var result: Result<T, Error>?
+    }
+    let container = ResultContainer()
+    // ... (wait on semaphore signal guaranteed after write)
 }
 
 // Use let (not var) for captured values in async closures
@@ -165,6 +169,21 @@ if argument.hasPrefix("--confidence=") {
 **Problem**: `swift-tools-version: 5.9` doesn't support `.macOS(.v15)` platform.
 
 **Solution**: Use `swift-tools-version: 6.0` which supports macOS 15 platform specifications.
+
+### 6. Notarytool Credentials Profile
+**Problem**: Repeatedly entering generic credentials for notarization is error-prone and insecure.
+
+**Solution**: Store credentials in the Keychain using `store-credentials`:
+```bash
+xcrun notarytool store-credentials --apple-id "me@example.com" --team-id "TEAMID" --password "app-specific-pw"
+# Prompts for profile name, e.g., "macOCR"
+```
+
+**Usage**:
+```bash
+xcrun notarytool submit macOCR.zip --keychain-profile "macOCR" --wait
+xcrun notarytool log <id> --keychain-profile "macOCR"
+```
 
 ## Testing Strategy
 
