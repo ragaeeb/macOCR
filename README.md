@@ -6,6 +6,8 @@ A high-performance Swift command-line tool that leverages Apple's [Vision framew
 
 - **High Accuracy OCR**: Uses `VNRecognizeTextRequestRevision3` for maximum text recognition accuracy
 - **Multi-Language Support**: Supports all Vision framework languages including RTL languages (Arabic, Hebrew)
+- **Paragraph Grouping**: Optional paragraph detection using `RecognizeDocumentsRequest` (macOS 26+)
+- **Confidence Scoring**: Configurable threshold to flag low-confidence OCR results for quality detection
 - **Flexible Input**: Process single images, entire directories, or specific PDF page ranges
 - **Multiple Output Formats**:
   - JSON with bounding boxes and metadata
@@ -17,8 +19,8 @@ A high-performance Swift command-line tool that leverages Apple's [Vision framew
 
 ## 🔧 Requirements
 
-- **macOS 15.0+** (Sequoia or later)
-- **Swift 5.7+**
+- **macOS 15.0+** (Sequoia or later; macOS 26+ for paragraph grouping)
+- **Swift 6.0+**
 - **Xcode 16+** (for building)
 - Apple Silicon or Intel Mac with Vision framework support
 
@@ -33,7 +35,7 @@ A high-performance Swift command-line tool that leverages Apple's [Vision framew
    sudo mv macOCR /usr/local/bin/
    ```
 
-### Option 2: Build from Source
+### Option 2: Build from Source (Swift Package Manager)
 
 ```bash
 git clone https://github.com/ragaeeb/macOCR.git
@@ -50,13 +52,15 @@ macOCR [OPTIONS] <input_path>
 
 ### Command-Line Options
 
-| Option                   | Description                       | Example                 |
-| ------------------------ | --------------------------------- | ----------------------- |
-| `-l, --language <codes>` | Comma-separated language codes    | `--language en,es,fr`   |
-| `-o, --output <path>`    | Output file or directory          | `--output results.json` |
-| `-p, --pages <range>`    | PDF page range (1-indexed)        | `--pages 1-5`           |
-| `-h, --help`             | Show comprehensive help           |                         |
-| `--supported-languages`  | List all available language codes |                         |
+| Option                       | Description                                  | Example                 |
+| ---------------------------- | -------------------------------------------- | ----------------------- |
+| `-l, --language <codes>`     | Comma-separated language codes (first=priority) | `--language en,es,fr`   |
+| `-o, --output <path>`        | Output file or directory                     | `--output results.json` |
+| `-p, --pages <range>`        | PDF page range (1-indexed)                   | `--pages 1-5`           |
+| `-g, --group`                | Enable paragraph grouping (macOS 26+)        |                         |
+| `-c, --confidence=<value>`   | Flag lines below confidence threshold        | `--confidence=0.5`      |
+| `-h, --help`                 | Show comprehensive help                      |                         |
+| `--supported-languages`      | List all available language codes            |                         |
 
 ### Input Formats
 
@@ -123,6 +127,29 @@ macOCR --supported-languages
 # → Displays JSON array of language codes
 ```
 
+### Paragraph Grouping (macOS 26+)
+
+```bash
+# Group text into paragraphs instead of individual lines
+macOCR --group --language ar document.pdf
+
+# Paragraphs include lines with individual bounding boxes
+macOCR -g --pages 1-5 arabic_book.pdf --output paragraphs.json
+```
+
+### Confidence Threshold for Quality Detection
+
+```bash
+# Flag lines with confidence below 0.3 (default)
+macOCR --language ar image.jpg
+
+# Flag lines with confidence below 0.5 (more sensitive)
+macOCR --confidence=0.5 --language ar image.jpg
+
+# Disable confidence flagging
+macOCR -c=0 image.jpg
+```
+
 ## 📊 Output Structure
 
 ### Single Image JSON
@@ -134,12 +161,37 @@ macOCR --supported-languages
   "observations": [
     {
       "text": "Detected text content",
+      "confidence": 0.3,
       "bbox": {
         "x": 123.456,
         "y": 78.901,
         "width": 234.567,
         "height": 45.678
       }
+    }
+  ]
+}
+```
+
+> Note: `confidence` field only appears when the value is below the configured threshold (default: 0.3)
+
+### Paragraph Grouping Output (with `--group`)
+
+```json
+{
+  "width": 1200,
+  "height": 800,
+  "paragraphs": [
+    {
+      "text": "Full paragraph text across multiple lines",
+      "bbox": { "x": 100.0, "y": 50.0, "width": 400.0, "height": 80.0 },
+      "lines": [
+        {
+          "text": "First line of paragraph",
+          "bbox": { "x": 100.0, "y": 50.0, "width": 400.0, "height": 25.0 },
+          "isTitle": false
+        }
+      ]
     }
   ]
 }
@@ -229,17 +281,9 @@ Use `macOCR --supported-languages` to get the complete list of available codes f
 
 ### Building Release Binary
 
-#### From Xcode (Recommended for production):
-
-1. Open the project in Xcode
-2. Go to `Product > Scheme > Edit Scheme`
-3. Under **Run** or **Archive**, ensure the build configuration is set to **Release**
-4. Use `CMD + B` to build, or go to `Product > Archive`
-5. Export the built binary via `Organizer > Distribute Content`
-
-#### From Terminal:
-
 ```bash
+git clone https://github.com/ragaeeb/macOCR.git
+cd macOCR
 swift build -c release
 # Resulting binary will be at .build/release/macOCR
 ```
@@ -259,6 +303,24 @@ swift build
 swift test
 ```
 
+## 📁 Project Structure
+
+The project uses Swift Package Manager with a modular architecture:
+
+```
+macOCR/
+├── Package.swift                 # SPM manifest (swift-tools-version: 6.0)
+├── Sources/
+│   ├── macOCRCore/               # Platform-neutral reusable library
+│   │   ├── CommandLine.swift     # Argument parsing
+│   │   ├── Rounding.swift        # round3() utilities  
+│   │   └── OutputWriters.swift   # JSON/text output
+│   └── macOCRCLI/
+│       └── main.swift            # CLI executable with Vision OCR
+└── Tests/
+    └── macOCRCoreTests/          # Unit tests (25 tests)
+```
+
 ## 🔒 Code Signing & Distribution
 
 ### ✅ 1. Build the Production Binary
@@ -267,7 +329,12 @@ Follow the build instructions above to create your release binary.
 
 ### 🔏 2. Code Sign the Binary
 
-First, verify your Developer ID certificate is installed:
+Find your binary in the build folder:
+```bash
+cp .build/release/macOCR ./macOCR
+```
+
+Verify your Developer ID certificate is installed:
 
 ```bash
 security find-identity -v -p codesigning
@@ -305,11 +372,22 @@ ditto -c -k --keepParent ./macOCR macOCR.zip
 
 ### 🧾 4. Submit for Notarization
 
+**Option A (Recommended): Store Credentials**
+
+```bash
+xcrun notarytool store-credentials --apple-id "your@email.com" --team-id "TEAMID" --password "app-specific-pw"
+# Prompts for profile name, e.g. "macOCR"
+
+xcrun notarytool submit macOCR.zip --keychain-profile "macOCR" --wait
+```
+
+**Option B: Direct Credentials**
+
 ```bash
 xcrun notarytool submit macOCR.zip \
   --apple-id "your@email.com" \
   --team-id "TEAMID" \
-  --password "app-specific-password" \
+  --password "app-specific-pw" \
   --wait
 ```
 
@@ -356,8 +434,9 @@ security delete-identity -c "Developer ID Application: Your Name" login
 
 **Expected behavior**. `spctl` is designed for apps, not CLI tools. Your notarized binary will work correctly.
 
-#### "This tool requires macOS 15 or newer"
+#### "Examples of version incompatibility errors"
 
+- Examples: `dyld: Symbol not found`, `OS version too low`
 - Update to macOS Sequoia (15.0) or later
 - Check system version with `sw_vers`
 

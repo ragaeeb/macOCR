@@ -1,0 +1,73 @@
+name: Remote PDF OCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      pdf_url:
+        description: 'URL of the PDF to process'
+        required: true
+        type: string
+      languages:
+        description: 'Comma-separated language codes (e.g., en,ar)'
+        default: 'en'
+        required: false
+        type: string
+      pages:
+        description: 'Page range (e.g., 1-5 or 1)'
+        required: false
+        type: string
+      enable_grouping:
+        description: 'Enable paragraph grouping (macOS 26+)'
+        default: false
+        required: false
+        type: boolean
+      confidence:
+        description: 'Confidence threshold (0.0-1.0)'
+        default: '0.3'
+        required: false
+        type: string
+
+jobs:
+  ocr:
+    name: Run Remote OCR
+    runs-on: macos-26
+    if: github.actor == github.repository_owner
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      
+    - name: Build macOCR
+      run: swift build -c release
+      
+    - name: Download PDF
+      run: |
+        curl -L -o input.pdf "${{ github.event.inputs.pdf_url }}"
+        
+    - name: Run OCR
+      run: |
+        ARGS=""
+        if [ -n "${{ github.event.inputs.languages }}" ]; then
+          ARGS="$ARGS --language ${{ github.event.inputs.languages }}"
+        fi
+        if [ "${{ github.event.inputs.enable_grouping }}" = "true" ]; then
+          ARGS="$ARGS --group"
+        fi
+        if [ -n "${{ github.event.inputs.confidence }}" ]; then
+          ARGS="$ARGS --confidence ${{ github.event.inputs.confidence }}"
+        fi
+        if [ -n "${{ github.event.inputs.pages }}" ]; then
+          ARGS="$ARGS --pages ${{ github.event.inputs.pages }}"
+        fi
+        
+        .build/release/macOCR $ARGS input.pdf
+        
+    - name: Upload Results
+      uses: actions/upload-artifact@v6
+      with:
+        name: ocr-results
+        path: |
+          input.json
+          input.txt
+        if-no-files-found: error
+        retention-days: 90
