@@ -11,33 +11,37 @@ import Dispatch
 
 // MARK: - Async Helper
 
-// Helper class to safely store the result across the async boundary
-// This avoids using 'nonisolated(unsafe) var' which is prone to data races
-private class ResultBox<T>: @unchecked Sendable {
-    var result: Result<T, Error>?
-}
-
+// Helper to safely bridge async-to-sync using a semaphore and a local variable
+// This approach avoids data races because 'result' is local to the function execution context
+// and the semaphore guarantees the value is set before reading.
 nonisolated func runAsyncAndBlock<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) throws -> T {
     let semaphore = DispatchSemaphore(value: 0)
-    let box = ResultBox<T>()
+    
+    // We use a class to hold the result so we can mutate it inside the strict-concurrency checked Task.
+    // Since we are blocking the calling thread until the semaphore signals, and the semaphore signals
+    // ONLY after the write, there is a happens-before relationship, making this safe.
+    class ResultContainer: @unchecked Sendable {
+        var result: Result<T, Error>?
+    }
+    let container = ResultContainer()
 
     Task {
         do {
             let value = try await operation()
-            box.result = .success(value)
+            container.result = .success(value)
         } catch {
-            box.result = .failure(error)
+            container.result = .failure(error)
         }
         semaphore.signal()
     }
 
     semaphore.wait()
 
-    if let outcome = box.result {
-        return try outcome.get()
+    guard let result = container.result else {
+        throw NSError(domain: "macOCR", code: -1, userInfo: [NSLocalizedDescriptionKey: "Async operation finished without a result."])
     }
 
-    throw NSError(domain: "macOCR", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown async execution failure"])
+    return try result.get()
 }
 
 // MARK: - Language Support
