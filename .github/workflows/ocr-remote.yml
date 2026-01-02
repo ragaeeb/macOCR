@@ -9,7 +9,7 @@ on:
         type: string
       languages:
         description: 'Comma-separated language codes (e.g., en,ar)'
-        default: 'en'
+        default: 'ar-SA'
         required: false
         type: string
       pages:
@@ -26,6 +26,14 @@ on:
         default: '0.3'
         required: false
         type: string
+      output_format:
+        description: 'Output format (json or txt)'
+        default: 'json'
+        required: false
+        type: choice
+        options:
+          - json
+          - txt
 
 jobs:
   ocr:
@@ -60,14 +68,13 @@ jobs:
           ARGS="$ARGS --pages ${{ github.event.inputs.pages }}"
         fi
         
-        .build/release/macOCR $ARGS input.pdf
+        # Explicitly set output path to make artifact collection predictable
+        .build/release/macOCR $ARGS input.pdf --output "output.${{ github.event.inputs.output_format }}"
         
     - name: Upload Results
       uses: actions/upload-artifact@v6
       with:
         name: ocr-results
-        path: |
-          input.json
-          input.txt
+        path: output.*
         if-no-files-found: error
         retention-days: 90
