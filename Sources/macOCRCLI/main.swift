@@ -11,23 +11,29 @@ import Dispatch
 
 // MARK: - Async Helper
 
+// Helper class to safely store the result across the async boundary
+// This avoids using 'nonisolated(unsafe) var' which is prone to data races
+private class ResultBox<T>: @unchecked Sendable {
+    var result: Result<T, Error>?
+}
+
 nonisolated func runAsyncAndBlock<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) throws -> T {
     let semaphore = DispatchSemaphore(value: 0)
-    nonisolated(unsafe) var result: Result<T, Error>?
+    let box = ResultBox<T>()
 
     Task {
         do {
             let value = try await operation()
-            result = .success(value)
+            box.result = .success(value)
         } catch {
-            result = .failure(error)
+            box.result = .failure(error)
         }
         semaphore.signal()
     }
 
     semaphore.wait()
 
-    if let outcome = result {
+    if let outcome = box.result {
         return try outcome.get()
     }
 
@@ -49,6 +55,19 @@ func printSupportedLanguages() {
     } else {
         print("Error: Could not retrieve supported languages")
     }
+}
+
+// Helper to standardise Vision to JSON coordinate conversion (Top-Left origin)
+func convertVisionBox(_ normalizedBox: CGRect, imageWidth: CGFloat, imageHeight: CGFloat) -> [String: Any] {
+    let absBox = VNImageRectForNormalizedRect(normalizedBox, Int(imageWidth), Int(imageHeight))
+    let flippedY = imageHeight - absBox.origin.y - absBox.size.height
+
+    return [
+        "x": round3(absBox.origin.x),
+        "y": round3(flippedY),
+        "width": round3(absBox.size.width),
+        "height": round3(absBox.size.height)
+    ]
 }
 
 // MARK: - Standard OCR (observations)
@@ -85,17 +104,9 @@ func performOCR(cgImage: CGImage, languages: [String], confidenceThreshold: Floa
         let range = candidate.string.startIndex..<candidate.string.endIndex
         let box = (try? candidate.boundingBox(for: range)?.boundingBox) ?? observation.boundingBox
 
-        let absBox = VNImageRectForNormalizedRect(box, Int(imageWidth), Int(imageHeight))
-        let flippedY = imageHeight - absBox.origin.y - absBox.size.height
-
         var entry: [String: Any] = [
             "text": candidate.string,
-            "bbox": [
-                "x": round3(absBox.origin.x),
-                "y": round3(flippedY),
-                "width": round3(absBox.size.width),
-                "height": round3(absBox.size.height)
-            ]
+            "bbox": convertVisionBox(box, imageWidth: imageWidth, imageHeight: imageHeight)
         ]
         
         // Include confidence when below threshold (and threshold > 0)
@@ -163,17 +174,10 @@ struct DocumentOCR {
                 let normalizedRect = paragraph.boundingRegion.boundingBox
                 let cgRect = CGRect(x: CGFloat(normalizedRect.origin.x), y: CGFloat(normalizedRect.origin.y),
                                     width: CGFloat(normalizedRect.width), height: CGFloat(normalizedRect.height))
-                let rect = VNImageRectForNormalizedRect(cgRect, Int(imageWidth), Int(imageHeight))
-                let flippedY = imageHeight - rect.origin.y - rect.size.height
-
+                
                 var paragraphEntry: [String: Any] = [
                     "text": paragraph.transcript,
-                    "bbox": [
-                        "x": round3(rect.origin.x),
-                        "y": round3(flippedY),
-                        "width": round3(rect.size.width),
-                        "height": round3(rect.size.height)
-                    ]
+                    "bbox": convertVisionBox(cgRect, imageWidth: imageWidth, imageHeight: imageHeight)
                 ]
 
                 var lines: [[String: Any]] = []
@@ -181,17 +185,10 @@ struct DocumentOCR {
                     let lineNormRect = line.boundingRegion.boundingBox
                     let lineCgRect = CGRect(x: CGFloat(lineNormRect.origin.x), y: CGFloat(lineNormRect.origin.y),
                                             width: CGFloat(lineNormRect.width), height: CGFloat(lineNormRect.height))
-                    let absLineRect = VNImageRectForNormalizedRect(lineCgRect, Int(imageWidth), Int(imageHeight))
-                    let lineFlippedY = imageHeight - absLineRect.origin.y - absLineRect.size.height
                     
                     var lineEntry: [String: Any] = [
                         "text": line.transcript,
-                        "bbox": [
-                            "x": round3(absLineRect.origin.x),
-                            "y": round3(lineFlippedY),
-                            "width": round3(absLineRect.size.width),
-                            "height": round3(absLineRect.size.height)
-                        ]
+                        "bbox": convertVisionBox(lineCgRect, imageWidth: imageWidth, imageHeight: imageHeight)
                     ]
                     
                     if line.isTitle {
@@ -327,16 +324,7 @@ func runCLI(args: [String]) -> Int32 {
             return 1
         }
 
-        let finalOutputPath: String
-        if let out = outputPath {
-            if out.lowercased().hasSuffix(".json") || out.lowercased().hasSuffix(".txt") {
-                finalOutputPath = out
-            } else {
-                finalOutputPath = (out as NSString).appendingPathComponent("batch_output.json")
-            }
-        } else {
-            finalOutputPath = (inputPath as NSString).appendingPathComponent("batch_output.json")
-        }
+        let finalOutputPath = resolveOutputPath(userOutputPath: outputPath, defaultDirectory: inputPath, defaultFilename: "batch_output.json")
 
         do {
             if finalOutputPath.lowercased().hasSuffix(".txt") {
@@ -361,46 +349,72 @@ func runCLI(args: [String]) -> Int32 {
                 return 1
             }
 
-            var pagesArray: [[String: Any]] = []
             let pageCount = pdf.pageCount
+            guard pageCount > 0 else {
+                fputs("Error: PDF has no pages: \(inputPath)\n", stderr)
+                return 1
+            }
 
+            var pagesArray: [[String: Any]] = []
             var dpiX: NSDecimalNumber = .zero
             var dpiY: NSDecimalNumber = .zero
-
-            let startPage = pageRange?.lowerBound ?? 1
-            let endPage = min(pageRange?.upperBound ?? pageCount, pageCount)
             
-            for index in (startPage-1)...(endPage-1) {
-                let modeText = groupParagraphs ? " (with paragraph grouping)" : ""
-                print("Processing page \(index + 1) of \(pageCount)\(modeText)...")
-                
-                guard let page = pdf.page(at: index) else { continue }
-                let pageBounds = page.bounds(for: .cropBox)
-                let effectiveBounds = pageBounds.isEmpty ? page.bounds(for: .mediaBox) : pageBounds
+            // 1-based start/end from args, default to full range
+            let requestedStart = pageRange?.lowerBound ?? 1
+            let requestedEnd = pageRange?.upperBound ?? pageCount
+            
+            // Convert to 0-based indices and clamp
+            let startIndex = max(0, requestedStart - 1)
+            let endExclusive = min(pageCount, requestedEnd)
+            
+            guard startIndex < endExclusive else {
+                fputs("Error: Requested page range \(requestedStart)-\(requestedEnd) is out of bounds (1-\(pageCount)).\n", stderr)
+                return 1
+            }
+            
+            for index in startIndex..<endExclusive {
+                let pageResult: [String: Any]? = autoreleasepool {
+                    let modeText = groupParagraphs ? " (with paragraph grouping)" : ""
+                    print("Processing page \(index + 1) of \(pageCount)\(modeText)...")
+                    
+                    guard let page = pdf.page(at: index) else { return nil }
+                    let pageBounds = page.bounds(for: .cropBox)
+                    // If cropBox is empty, fallback to mediaBox
+                    let effectiveBounds = pageBounds.isEmpty ? page.bounds(for: .mediaBox) : pageBounds
 
-                let scale: CGFloat = 2.0
-                let renderSize = CGSize(
-                    width: max(1, effectiveBounds.width * scale),
-                    height: max(1, effectiveBounds.height * scale)
-                )
-                let thumb = page.thumbnail(of: renderSize, for: .cropBox)
-                guard let cgImg = thumb.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                    fputs("Failed to render page \(index + 1) of PDF.\n", stderr)
-                    continue
+                    let scale: CGFloat = 2.0
+                    let renderSize = CGSize(
+                        width: max(1, effectiveBounds.width * scale),
+                        height: max(1, effectiveBounds.height * scale)
+                    )
+                    
+                    let thumb = page.thumbnail(of: renderSize, for: .cropBox)
+                    guard let cgImg = thumb.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                        fputs("Failed to render page \(index + 1) of PDF.\n", stderr)
+                        return nil
+                    }
+
+                    // Calculate DPI for the first page in the range to populate global metadata
+                    if index == startIndex {
+                        let rawDpiX = Double(cgImg.width) / (Double(effectiveBounds.width) / 72.0)
+                        let rawDpiY = Double(cgImg.height) / (Double(effectiveBounds.height) / 72.0)
+                        dpiX = round3(rawDpiX)
+                        dpiY = round3(rawDpiY)
+                    }
+
+                    return performOCRWithSettings(cgImage: cgImg, languages: languages, group: groupParagraphs, threshold: confidenceThreshold)
                 }
 
-                if index == (startPage-1) {
-                    let rawDpiX = Double(cgImg.width) / (Double(effectiveBounds.width) / 72.0)
-                    let rawDpiY = Double(cgImg.height) / (Double(effectiveBounds.height) / 72.0)
-                    dpiX = round3(rawDpiX)
-                    dpiY = round3(rawDpiY)
-                }
-
-                let ocrResult = performOCRWithSettings(cgImage: cgImg, languages: languages, group: groupParagraphs, threshold: confidenceThreshold)
-                
-                if var pageDict = ocrResult {
-                    pageDict["page"] = index + 1
-                    pagesArray.append(pageDict)
+                if var validResult = pageResult {
+                    validResult["page"] = index + 1
+                    pagesArray.append(validResult)
+                } else {
+                    // Include empty entry for pages with no text or render failures to maintain page count alignment
+                    pagesArray.append([
+                        "page": index + 1,
+                        "text": "",
+                        "lines": [] as [Any]
+                    ])
                 }
             }
 
@@ -409,16 +423,9 @@ func runCLI(args: [String]) -> Int32 {
                 "dpi": ["x": dpiX, "y": dpiY]
             ]
 
-            let finalOutputPath: String
-            if let out = outputPath {
-                if out.lowercased().hasSuffix(".json") || out.lowercased().hasSuffix(".txt") {
-                    finalOutputPath = out
-                } else {
-                    finalOutputPath = (out as NSString).appendingPathComponent(inputURL.deletingPathExtension().lastPathComponent + "_pdf_output.json")
-                }
-            } else {
-                finalOutputPath = inputURL.deletingPathExtension().path + "_pdf_output.json"
-            }
+            let defaultFilename = inputURL.deletingPathExtension().lastPathComponent + "_pdf_output.json"
+            let defaultDir = inputURL.deletingLastPathComponent().path
+            let finalOutputPath = resolveOutputPath(userOutputPath: outputPath, defaultDirectory: defaultDir, defaultFilename: defaultFilename)
 
             do {
                 if finalOutputPath.lowercased().hasSuffix(".txt") {
@@ -442,16 +449,8 @@ func runCLI(args: [String]) -> Int32 {
             }
 
             let filename = inputURL.deletingPathExtension().lastPathComponent
-            let outputFile: String
-            if let out = outputPath {
-                if out.lowercased().hasSuffix(".json") || out.lowercased().hasSuffix(".txt") {
-                    outputFile = out
-                } else {
-                    outputFile = (out as NSString).appendingPathComponent(filename + ".json")
-                }
-            } else {
-                outputFile = (inputURL.deletingLastPathComponent().path as NSString).appendingPathComponent(filename + ".json")
-            }
+            let defaultDir = inputURL.deletingLastPathComponent().path
+            let outputFile = resolveOutputPath(userOutputPath: outputPath, defaultDirectory: defaultDir, defaultFilename: filename + ".json")
 
             do {
                 if outputFile.lowercased().hasSuffix(".txt") {

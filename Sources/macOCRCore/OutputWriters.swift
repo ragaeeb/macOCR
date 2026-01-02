@@ -21,6 +21,23 @@ public func writeJSONObjectOrdered(_ object: [String: Any], to finalOutputPath: 
     try jsonData.write(to: URL(fileURLWithPath: finalOutputPath))
 }
 
+/// Resolves the final output path based on user input and defaults.
+/// - Parameters:
+///   - userOutputPath: The optional output path provided by the user.
+///   - defaultDirectory: The default directory to use if no output path is provided.
+///   - defaultFilename: The default filename to use.
+/// - Returns: The resolved absolute output path.
+public func resolveOutputPath(userOutputPath: String?, defaultDirectory: String, defaultFilename: String) -> String {
+    if let userPath = userOutputPath {
+        let lower = userPath.lowercased()
+        if lower.hasSuffix(".json") || lower.hasSuffix(".txt") {
+            return userPath
+        }
+        return (userPath as NSString).appendingPathComponent(defaultFilename)
+    }
+    return (defaultDirectory as NSString).appendingPathComponent(defaultFilename)
+}
+
 /// Writes OCR output as plain text, preferring paragraph transcripts when available.
 /// - Parameters:
 ///   - object: The OCR result structure (single image, PDF, or batch output).

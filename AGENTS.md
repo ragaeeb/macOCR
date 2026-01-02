@@ -32,7 +32,7 @@ swift build -c release
 
 ### Module Structure
 
-```
+```text
 Sources/
 ├── macOCRCore/              # Platform-neutral library (can be tested independently)
 │   ├── CommandLine.swift    # CLI argument parsing

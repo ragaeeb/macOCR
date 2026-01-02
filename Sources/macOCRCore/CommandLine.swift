@@ -77,16 +77,35 @@ public func parseCommandLineArguments(_ args: [String]) -> CommandLineOptions? {
                 return nil
             }
             index += 1
-            let components = args[index]
+            let componentStr = args[index]
+            let components = componentStr
                 .split(separator: "-")
                 .compactMap { Int($0) }
+            
             if components.count == 2,
                components[0] > 0,
                components[1] >= components[0] {
                 options.pageRange = components[0]...components[1]
+            } else if components.count == 1, let singlePage = Int(componentStr), singlePage > 0 {
+                // Support single page "--pages 5" as "5-5"
+                options.pageRange = singlePage...singlePage
             } else {
-                fputs("Error: Invalid page range format. Use format like '2-5'\n", stderr)
+                fputs("Error: Invalid page range format. Use format like '2-5' or '5'\n", stderr)
                 return nil
+            }
+
+        case "-c", "--confidence":
+            guard index + 1 < args.count else {
+                fputs("Error: \(argument) requires a value\n", stderr)
+                return nil
+            }
+            index += 1
+            let valStr = args[index]
+            if let value = Float(valStr), value >= 0.0 && value <= 1.0 {
+                options.confidenceThreshold = value
+            } else {
+                 fputs("Error: --confidence requires a value between 0.0 and 1.0\n", stderr)
+                 return nil
             }
 
         default:
@@ -154,7 +173,7 @@ public func printUsage() {
                                         - If path is directory: Files saved within
 
         -p, --pages <range>             Page range for PDF processing (1-indexed)
-                                        Format: start-end (e.g., 1-5, 3-10)
+                                        Format: start-end (e.g., 1-5) or single page (e.g., 5)
                                         Only processes specified pages
 
         -g, --group                     Enable paragraph grouping (macOS 26+)
@@ -164,13 +183,13 @@ public func printUsage() {
                                         Each paragraph includes its lines with bounding boxes
                                         and 'isTitle' flag for title lines.
 
-        -c, --confidence=<threshold>    Include confidence score in output when below
+        -c, --confidence <val>          Include confidence score in output when below
                                         threshold value (default: 0.3)
                                         - Lines with confidence below threshold get a
                                           "confidence" field in the output
                                         - Set to 0 to disable confidence reporting
                                         - Useful for detecting OCR quality issues
-                                        Examples: --confidence=0.5, -c=0, --confidence=0.3
+                                        Examples: -c 0.5, --confidence=0.5, -c=0
 
         -h, --help                      Show this comprehensive help message
 
