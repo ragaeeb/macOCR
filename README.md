@@ -1,5 +1,14 @@
 # macOCR
 
+[![wakatime](https://wakatime.com/badge/user/a0b906ce-b8e7-4463-8bce-383238df6d4b/project/a62c5882-35d6-459c-8495-ed19b66fc67f.svg)](https://wakatime.com/badge/user/a0b906ce-b8e7-4463-8bce-383238df6d4b/project/a62c5882-35d6-459c-8495-ed19b66fc67f)
+[![Test](https://github.com/ragaeeb/macOCR/actions/workflows/test.yml/badge.svg)](https://github.com/ragaeeb/macOCR/actions/workflows/test.yml)
+[![codecov](https://codecov.io/github/ragaeeb/macOCR/graph/badge.svg?token=K7YCHN75U9)](https://codecov.io/github/ragaeeb/macOCR)
+![GitHub Release](https://img.shields.io/github/v/release/ragaeeb/macOCR)
+![GitHub License](https://img.shields.io/github/license/ragaeeb/macOCR)
+![Swift](https://img.shields.io/badge/Swift-6.0-F05138.svg?style=flat&logo=swift&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-15.0+-000000.svg?style=flat&logo=apple&logoColor=white)
+[![codecov](https://codecov.io/gh/ragaeeb/macOCR/graph/badge.svg?token=EBMCEK3WX8)](https://codecov.io/gh/ragaeeb/macOCR)
+
 A high-performance Swift command-line tool that leverages Apple's [Vision framework](https://developer.apple.com/documentation/vision) to perform accurate OCR on images and PDF documents. Outputs structured JSON with precise bounding boxes or clean plain text, perfect for integration with automation workflows, data processing pipelines, and downstream applications.
 
 ## ✨ Features
