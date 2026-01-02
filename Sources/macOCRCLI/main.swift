@@ -11,33 +11,28 @@ import Dispatch
 
 // MARK: - Async Helper
 
-// Helper to safely bridge async-to-sync using a semaphore and a local variable
-// This approach avoids data races because 'result' is local to the function execution context
-// and the semaphore guarantees the value is set before reading.
+// Helper container safely bridging async-to-sync using a semaphore.
+private class ResultBox<T>: @unchecked Sendable {
+    var result: Result<T, Error>?
+}
+
 nonisolated func runAsyncAndBlock<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) throws -> T {
     let semaphore = DispatchSemaphore(value: 0)
-    
-    // We use a class to hold the result so we can mutate it inside the strict-concurrency checked Task.
-    // Since we are blocking the calling thread until the semaphore signals, and the semaphore signals
-    // ONLY after the write, there is a happens-before relationship, making this safe.
-    class ResultContainer: @unchecked Sendable {
-        var result: Result<T, Error>?
-    }
-    let container = ResultContainer()
+    let box = ResultBox<T>()
 
     Task {
         do {
             let value = try await operation()
-            container.result = .success(value)
+            box.result = .success(value)
         } catch {
-            container.result = .failure(error)
+            box.result = .failure(error)
         }
         semaphore.signal()
     }
 
     semaphore.wait()
 
-    guard let result = container.result else {
+    guard let result = box.result else {
         throw NSError(domain: "macOCR", code: -1, userInfo: [NSLocalizedDescriptionKey: "Async operation finished without a result."])
     }
 
