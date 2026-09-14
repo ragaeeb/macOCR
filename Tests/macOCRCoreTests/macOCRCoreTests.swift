@@ -52,6 +52,20 @@ final class MacOCRCoreTests: XCTestCase {
         XCTAssertFalse(options!.groupParagraphs)
     }
 
+    func testParseCommandLineArgumentsDefaultsToNoDiagnostics() {
+        let arguments = ["macocr", "image.jpg"]
+        let options = parseCommandLineArguments(arguments)
+        XCTAssertNotNil(options)
+        XCTAssertFalse(options!.diagnostics)
+    }
+
+    func testParseCommandLineArgumentsWithDiagnosticsFlag() {
+        let arguments = ["macocr", "--diagnostics", "image.jpg"]
+        let options = parseCommandLineArguments(arguments)
+        XCTAssertNotNil(options)
+        XCTAssertTrue(options!.diagnostics)
+    }
+
     func testParseCommandLineArgumentsRejectsInvalidPageRange() {
         let arguments = ["macocr", "--pages", "5-3", "input.png"]
         XCTAssertNil(parseCommandLineArguments(arguments))

@@ -20,6 +20,8 @@ public struct CommandLineOptions: Equatable, Sendable {
     public var groupParagraphs: Bool = false
     /// Confidence threshold for including confidence in output (0.0 to disable, default 0.3)
     public var confidenceThreshold: Float = 0.3
+    /// Emit top-five Vision candidates and request/raster provenance without changing the selected text
+    public var diagnostics: Bool = false
     
     public init() {}
 }
@@ -48,6 +50,9 @@ public func parseCommandLineArguments(_ args: [String]) -> CommandLineOptions? {
             
         case "-g", "--group":
             options.groupParagraphs = true
+
+        case "--diagnostics":
+            options.diagnostics = true
 
         case "-l", "--language", "--languages":
             guard index + 1 < args.count else {
@@ -190,6 +195,11 @@ public func printUsage() {
                                         - Set to 0 to disable confidence reporting
                                         - Useful for detecting OCR quality issues
                                         Examples: -c 0.5, --confidence=0.5, -c=0
+
+        --diagnostics                   Add top-five Vision candidates, all candidate
+                                        confidences, stable observation IDs, UTF-16
+                                        ranges, request settings, and raster metadata.
+                                        Standard OCR only; selected text is unchanged.
 
         -h, --help                      Show this comprehensive help message
 

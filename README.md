@@ -17,6 +17,7 @@ A high-performance Swift command-line tool that leverages Apple's [Vision framew
 - **Multi-Language Support**: Supports all Vision framework languages including RTL languages (Arabic, Hebrew)
 - **Paragraph Grouping**: Optional paragraph detection using `RecognizeDocumentsRequest` (macOS 26+)
 - **Confidence Scoring**: Configurable threshold to flag low-confidence OCR results for quality detection
+- **Opt-in Diagnostics**: Retains up to five Vision candidates, request settings, stable observation IDs, UTF-16 ranges, and raster hashes without changing selected text
 - **Flexible Input**: Process single images, entire directories, or specific PDF page ranges
 - **Multiple Output Formats**:
   - JSON with bounding boxes and metadata
@@ -68,6 +69,7 @@ macOCR [OPTIONS] <input_path>
 | `-p, --pages <range>`        | PDF page range (1-indexed)                   | `--pages 1-5`           |
 | `-g, --group`                | Enable paragraph grouping (macOS 26+)        |                         |
 | `-c, --confidence=<value>`   | Flag lines below confidence threshold        | `--confidence=0.5`      |
+| `--diagnostics`              | Add top-five candidate and provenance data   | `--diagnostics`         |
 | `-h, --help`                 | Show comprehensive help                      |                         |
 | `--supported-languages`      | List all available language codes            |                         |
 
@@ -158,6 +160,16 @@ macOCR --confidence=0.5 --language ar image.jpg
 # Disable confidence flagging
 macOCR -c=0 image.jpg
 ```
+
+### Recognition Diagnostics
+
+```bash
+macOCR --diagnostics --language ar --output diagnostics.json image.png
+```
+
+Diagnostics are opt-in and apply to standard `VNRecognizeTextRequest` output. The winning text and bounding box remain identical to the default mode. Each observation additionally includes a stable page-local ID, `rawText`, the candidates Vision returned (up to five), all candidate confidences, a UTF-16 `sourceRange`, and an explicit `word` precision label for substring geometry. Root metadata records the request configuration and a SHA-256 hash of the exact `CGImage` provider bytes used by Vision.
+
+The raster hash proves what macOCR saw; it does not prove that another OCR engine received the same pixels unless that engine records the same hash.
 
 ## 📊 Output Structure
 

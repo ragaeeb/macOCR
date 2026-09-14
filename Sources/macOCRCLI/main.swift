@@ -6,6 +6,7 @@ let VERSION = "1.3.0"
 #if canImport(Vision) && canImport(Cocoa) && canImport(PDFKit)
 import Vision
 import Cocoa
+import CryptoKit
 import PDFKit
 import Dispatch
 
@@ -69,9 +70,26 @@ func convertVisionBox(_ normalizedBox: CGRect, imageWidth: CGFloat, imageHeight:
     ]
 }
 
+func rasterMetadata(_ cgImage: CGImage) -> [String: Any] {
+    var metadata: [String: Any] = [
+        "width": cgImage.width,
+        "height": cgImage.height,
+        "bitsPerComponent": cgImage.bitsPerComponent,
+        "bitsPerPixel": cgImage.bitsPerPixel,
+        "bytesPerRow": cgImage.bytesPerRow
+    ]
+
+    if let providerData = cgImage.dataProvider?.data {
+        let digest = SHA256.hash(data: providerData as Data)
+        metadata["sha256"] = digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    return metadata
+}
+
 // MARK: - Standard OCR (observations)
 
-func performOCR(cgImage: CGImage, languages: [String], confidenceThreshold: Float) -> [String: Any]? {
+func performOCR(cgImage: CGImage, languages: [String], confidenceThreshold: Float, diagnostics: Bool) -> [String: Any]? {
     let imageWidth = CGFloat(cgImage.width)
     let imageHeight = CGFloat(cgImage.height)
 
@@ -97,8 +115,9 @@ func performOCR(cgImage: CGImage, languages: [String], confidenceThreshold: Floa
 
     var observations: [[String: Any]] = []
 
-    for observation in results {
-        guard let candidate = observation.topCandidates(1).first else { continue }
+    for (index, observation) in results.enumerated() {
+        let candidates = observation.topCandidates(diagnostics ? 5 : 1)
+        guard let candidate = candidates.first else { continue }
 
         let range = candidate.string.startIndex..<candidate.string.endIndex
         let box = (try? candidate.boundingBox(for: range)?.boundingBox) ?? observation.boundingBox
@@ -112,25 +131,60 @@ func performOCR(cgImage: CGImage, languages: [String], confidenceThreshold: Floa
         if confidenceThreshold > 0 && candidate.confidence < confidenceThreshold {
             entry["confidence"] = round3(Double(candidate.confidence))
         }
+
+        if diagnostics {
+            entry["id"] = String(format: "observation-%04d", index + 1)
+            entry["rawText"] = candidate.string
+            entry["confidence"] = round3(Double(candidate.confidence))
+            entry["bboxPrecision"] = "word"
+            entry["sourceRange"] = [
+                "unit": "utf16",
+                "location": 0,
+                "length": (candidate.string as NSString).length
+            ]
+            entry["candidates"] = candidates.enumerated().map { rank, alternative in
+                [
+                    "rank": rank + 1,
+                    "text": alternative.string,
+                    "confidence": round3(Double(alternative.confidence))
+                ] as [String: Any]
+            }
+        }
         
         observations.append(entry)
     }
 
-    return [
+    var output: [String: Any] = [
         "width": Int(imageWidth),
         "height": Int(imageHeight),
         "observations": observations
     ]
+
+    if diagnostics {
+        output["request"] = [
+            "engine": "VNRecognizeTextRequest",
+            "recognitionLevel": "accurate",
+            "revision": request.revision,
+            "recognitionLanguages": languages,
+            "usesLanguageCorrection": request.usesLanguageCorrection,
+            "minimumTextHeight": round3(Double(request.minimumTextHeight)),
+            "candidateCount": 5,
+            "substringBoxPrecision": "word"
+        ]
+        output["raster"] = rasterMetadata(cgImage)
+    }
+
+    return output
 }
 
-func performOCR(on imagePath: String, languages: [String], confidenceThreshold: Float) -> [String: Any]? {
+func performOCR(on imagePath: String, languages: [String], confidenceThreshold: Float, diagnostics: Bool) -> [String: Any]? {
     guard let img = NSImage(byReferencingFile: imagePath),
           let imgRef = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
         fputs("Error: failed to load or convert image '\(imagePath)'\n", stderr)
         return nil
     }
 
-    return performOCR(cgImage: imgRef, languages: languages, confidenceThreshold: confidenceThreshold)
+    return performOCR(cgImage: imgRef, languages: languages, confidenceThreshold: confidenceThreshold, diagnostics: diagnostics)
 }
 
 // MARK: - Document OCR with Paragraph Grouping (macOS 26+)
@@ -231,7 +285,7 @@ struct DocumentOCR {
 
 // MARK: - OCR Wrappers with Version Handling
 
-func performOCRWithSettings(on imagePath: String, languages: [String], group: Bool, threshold: Float) -> [String: Any]? {
+func performOCRWithSettings(on imagePath: String, languages: [String], group: Bool, threshold: Float, diagnostics: Bool) -> [String: Any]? {
     if group {
         if #available(macOS 26.0, *) {
             return DocumentOCR.perform(on: imagePath, languages: languages, confidenceThreshold: threshold)
@@ -239,10 +293,10 @@ func performOCRWithSettings(on imagePath: String, languages: [String], group: Bo
             fputs("Warning: --group requires macOS 26.0+. Falling back to standard OCR.\n", stderr)
         }
     }
-    return performOCR(on: imagePath, languages: languages, confidenceThreshold: threshold)
+    return performOCR(on: imagePath, languages: languages, confidenceThreshold: threshold, diagnostics: diagnostics)
 }
 
-func performOCRWithSettings(cgImage: CGImage, languages: [String], group: Bool, threshold: Float) -> [String: Any]? {
+func performOCRWithSettings(cgImage: CGImage, languages: [String], group: Bool, threshold: Float, diagnostics: Bool) -> [String: Any]? {
     if group {
         if #available(macOS 26.0, *) {
             return DocumentOCR.perform(cgImage: cgImage, languages: languages, confidenceThreshold: threshold)
@@ -250,7 +304,7 @@ func performOCRWithSettings(cgImage: CGImage, languages: [String], group: Bool, 
             fputs("Warning: --group requires macOS 26.0+. Falling back to standard OCR.\n", stderr)
         }
     }
-    return performOCR(cgImage: cgImage, languages: languages, confidenceThreshold: threshold)
+    return performOCR(cgImage: cgImage, languages: languages, confidenceThreshold: threshold, diagnostics: diagnostics)
 }
 
 // MARK: - Main CLI Logic
@@ -289,6 +343,7 @@ func runCLI(args: [String]) -> Int32 {
     let pageRange = options.pageRange
     let groupParagraphs = options.groupParagraphs
     let confidenceThreshold = options.confidenceThreshold
+    let diagnostics = options.diagnostics
 
     var isDir: ObjCBool = false
     guard fileManager.fileExists(atPath: inputPath, isDirectory: &isDir) else {
@@ -311,7 +366,7 @@ func runCLI(args: [String]) -> Int32 {
         var results: [String: [String: Any]] = [:]
         for file in imageFiles {
             let fullPath = (inputPath as NSString).appendingPathComponent(file)
-            let ocrResult = performOCRWithSettings(on: fullPath, languages: languages, group: groupParagraphs, threshold: confidenceThreshold)
+            let ocrResult = performOCRWithSettings(on: fullPath, languages: languages, group: groupParagraphs, threshold: confidenceThreshold, diagnostics: diagnostics)
             
             if let result = ocrResult {
                 results[file] = result
@@ -401,7 +456,7 @@ func runCLI(args: [String]) -> Int32 {
                         dpiY = round3(rawDpiY)
                     }
 
-                    return performOCRWithSettings(cgImage: cgImg, languages: languages, group: groupParagraphs, threshold: confidenceThreshold)
+                    return performOCRWithSettings(cgImage: cgImg, languages: languages, group: groupParagraphs, threshold: confidenceThreshold, diagnostics: diagnostics)
                 }
 
                 if var validResult = pageResult {
@@ -441,7 +496,7 @@ func runCLI(args: [String]) -> Int32 {
             }
         } else {
             // Single image
-            let ocrResult = performOCRWithSettings(on: inputPath, languages: languages, group: groupParagraphs, threshold: confidenceThreshold)
+            let ocrResult = performOCRWithSettings(on: inputPath, languages: languages, group: groupParagraphs, threshold: confidenceThreshold, diagnostics: diagnostics)
             
             guard let result = ocrResult else {
                 return 1
