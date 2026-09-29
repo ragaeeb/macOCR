@@ -137,7 +137,7 @@ main() {
   codesign --verify --strict --verbose=2 "$stage/macOCR" 2>&1 | tee "$LOG_DIR/codesign-verify.log"
 
   local zip="$stage/macOCR.zip"
-  ditto -c -k --keepParent "$stage/macOCR" "$zip"
+  ditto -c -k --norsrc --noextattr "$stage/macOCR" "$zip"  # zip root: macOCR (no folder, no AppleDouble)
 
   log "Submitting to Apple notarization (this usually takes a few minutes)"
   xcrun notarytool submit "$zip" --keychain-profile "$NOTARY_PROFILE" --team-id "$TEAM_ID" --wait --output-format json \
