@@ -1,7 +1,7 @@
 import Foundation
 import macOCRCore
 
-let VERSION = "1.3.0"
+let VERSION = "1.4.0"
 
 #if canImport(Vision) && canImport(Cocoa) && canImport(PDFKit)
 import Vision

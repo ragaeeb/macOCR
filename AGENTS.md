@@ -168,9 +168,11 @@ if argument.hasPrefix("--confidence=") {
 ### 5. Package.swift Version for macOS 15
 **Problem**: `swift-tools-version: 5.9` doesn't support `.macOS(.v15)` platform.
 
-**Solution**: Use `swift-tools-version: 6.0` which supports macOS 15 platform specifications.
+**Solution**: Use `swift-tools-version: 6.2` (≥ 6.0) which supports macOS 15 platform specifications.
 
 ### 6. Notarytool Credentials Profile
+**Release script**: `./scripts/release.sh` automates build, signing, notarization and the GitHub release (see README → Releasing). Use it instead of manual commands.
+
 **Problem**: Repeatedly entering generic credentials for notarization is error-prone and insecure.
 
 **Solution**: Store credentials in the Keychain using `store-credentials`:

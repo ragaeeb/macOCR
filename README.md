@@ -330,7 +330,7 @@ The project uses Swift Package Manager with a modular architecture:
 
 ```
 macOCR/
-├── Package.swift                 # SPM manifest (swift-tools-version: 6.0)
+├── Package.swift                 # SPM manifest (swift-tools-version: 6.2)
 ├── Sources/
 │   ├── macOCRCore/               # Platform-neutral reusable library
 │   │   ├── CommandLine.swift     # Argument parsing
@@ -343,6 +343,21 @@ macOCR/
 ```
 
 ## 🔒 Code Signing & Distribution
+
+### 🚀 Releasing (one command)
+
+```bash
+./scripts/release.sh --preflight   # check signing identity, notary profile and git state
+./scripts/release.sh               # test, build (universal), sign, notarize, publish GitHub release
+./scripts/release.sh --bump minor  # bump the version, commit, then release
+```
+
+The script releases the `VERSION` in `Sources/macOCRCLI/main.swift` from an up-to-date `main`, signs with the
+Developer ID identity for team `4HBBQ4R4RN`, notarizes with the `macOCR` notarytool keychain profile (it offers to
+create the profile if missing), and uploads `macOCR.zip` + `macOCR.zip.sha256` to a new GitHub release. Logs go to
+`.logs/release/`, artifacts to `dist/`. Use `--no-publish` to sign and notarize without tagging or releasing.
+
+The manual steps below document what the script does.
 
 ### ✅ 1. Build the Production Binary
 

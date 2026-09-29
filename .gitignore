@@ -31,3 +31,7 @@ DerivedData
 project.xcworkspace
 
 
+
+# Release script output
+.logs/
+dist/
